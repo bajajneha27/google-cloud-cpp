@@ -48,6 +48,7 @@ using ::google::cloud::testing_util::StatusIs;
 using ::google::cloud::testing_util::ValidateMetadataFixture;
 using ::google::protobuf::TextFormat;
 using ::testing::VariantWith;
+using ::testing::_;
 
 using AsyncBidiWriteObjectStream = ::google::cloud::AsyncStreamingReadWriteRpc<
     google::storage::v2::BidiWriteObjectRequest,
@@ -1373,6 +1374,187 @@ TEST_F(AsyncConnectionImplTest, ResumeBufferedUploadPermanentError) {
 
   auto r = pending.get();
   EXPECT_THAT(r, StatusIs(PermanentError().code()));
+}
+
+TEST_F(AsyncConnectionImplTest, StartAppendableObjectUpload) {
+  auto constexpr kExpectedRequest = R"pb(
+    write_object_spec {
+      resource { bucket: "projects/_/buckets/test-bucket" name: "test-object" }
+      appendable: true
+    }
+  )pb";
+
+  AsyncSequencer<bool> sequencer;
+  auto mock = std::make_shared<storage::testing::MockStorageStub>();
+  EXPECT_CALL(*mock, AsyncBidiWriteObject)
+      .WillOnce([&](CompletionQueue const&,
+                    std::shared_ptr<grpc::ClientContext> const&,
+                    google::cloud::internal::ImmutableOptions const& ) {
+        auto stream = std::make_unique<MockAsyncBidiWriteObjectStream>();
+
+        // Expectations for the stream's methods
+        EXPECT_CALL(*stream, Start)
+            .WillOnce([&sequencer] { return sequencer.PushBack("Start").then([](auto f) { return f.get(); }); });
+
+        // Mocks for Write operations, ordered by InSequence
+        EXPECT_CALL(*stream, Write) // Write[1]: Initial Spec
+            .Times(::testing::AnyNumber())
+            .WillRepeatedly([&](google::storage::v2::BidiWriteObjectRequest const& request, grpc::WriteOptions wopt) {
+                  std::cerr << "--- MOCK Write[1] matched. Request:\n" << "\n";
+                  // Assertions for the initial spec request
+                  // EXPECT_TRUE(request.has_write_object_spec());
+                  // EXPECT_EQ(request.write_object_spec().resource().bucket(), "test-bucket");
+                  // EXPECT_EQ(request.write_object_spec().resource().name(), "test-object");
+                  // EXPECT_TRUE(request.write_object_spec().appendable());
+                  // EXPECT_TRUE(request.state_lookup());
+                  // EXPECT_FALSE(wopt.is_last_message());
+                  return sequencer.PushBack("Write[1]");
+                });
+
+        // EXPECT_CALL(*stream, Write) // Write[3]: Finalize Call
+        //     .WillOnce(
+        //         [&](google::storage::v2::BidiWriteObjectRequest const& request,
+        //             grpc::WriteOptions wopt) {
+        //           std::cerr << "--- MOCK Write[3] matched. Request:\n" << "\n";
+        //           // Assertions for finalize call
+        //           EXPECT_FALSE(request.has_write_object_spec());
+        //           EXPECT_FALSE(request.has_checksummed_data()); // Finalize may or may not have data field itself
+        //           EXPECT_TRUE(request.finish_write());
+        //           EXPECT_TRUE(request.has_object_checksums()); // Checksums expected with finalize
+        //           EXPECT_TRUE(wopt.is_last_message());
+        //           return sequencer.PushBack("Write[3]");
+        //         });
+
+        // // This catch-all ensures we get a warning if any Write call doesn't match above
+        // EXPECT_CALL(*stream, Write(_, _))
+        //     .Times(::testing::AnyNumber()) // Allow it to be called
+        //     .WillRepeatedly([&](google::storage::v2::BidiWriteObjectRequest const& request, grpc::WriteOptions wopt) {
+        //         // Using FAIL() here will terminate the test immediately with an informative message.
+        //         std::cerr << "!!! UNEXPECTED MOCK Write CALL !!! Request:\n" << "\n"
+        //                << "This indicates a mismatch in the expected `Write` sequence or content." << std::endl;
+        //         // Need a return to compile; this branch should FAIL
+        //         return sequencer.PushBack("Write");
+        //     });
+
+
+        // Mocks for Read operations, ordered by InSequence
+        EXPECT_CALL(*stream, Read) // Read[1]: After initial spec write
+            .WillOnce([&] {
+                std::cerr << "--- MOCK Read[1] matched. --- \n";
+                return sequencer.PushBack("Read[1]").then([](auto) {
+                    google::storage::v2::BidiWriteObjectResponse response;
+                    response.set_persisted_size(0);
+                    return absl::make_optional(std::move(response));
+                });
+            });
+
+        // EXPECT_CALL(*stream, Read) // Read[2]: After data chunk write
+        //     .WillOnce([&] {
+        //         std::cerr << "--- MOCK Read[2] matched. --- \n";
+        //         return sequencer.PushBack("Read[2]").then([](auto) {
+        //             google::storage::v2::BidiWriteObjectResponse response;
+        //             response.set_persisted_size(1024); // Simulate some data written
+        //             return absl::make_optional(std::move(response));
+        //         });
+        //     });
+
+        // EXPECT_CALL(*stream, Read) // Read[3]: After Finalize
+        //     .WillOnce([&] {
+        //         std::cerr << "--- MOCK Read[3] matched. --- \n";
+        //         return sequencer.PushBack("Read[3]").then([](auto) {
+        //             auto response = google::storage::v2::BidiWriteObjectResponse{};
+        //             response.mutable_resource()->set_bucket("projects/_/buckets/test-bucket");
+        //             response.mutable_resource()->set_name("test-object");
+        //             response.mutable_resource()->set_generation(987654);
+        //             return absl::make_optional(std::move(response));
+        //         });
+        //     });
+
+        // // This catch-all ensures we get a warning if any Read call doesn't match above
+        // EXPECT_CALL(*stream, Read())
+        //     .Times(::testing::AnyNumber())
+        //     .WillRepeatedly([&] {
+        //         std::cerr << "!!! UNEXPECTED MOCK Read CALL !!!"
+        //                << "\nThis indicates a mismatch in the expected `Read` sequence." << std::endl;
+        //         return sequencer.PushBack("Read").then([](auto) {
+        //           auto response = google::storage::v2::BidiWriteObjectResponse{};
+        //           return absl::make_optional(std::move(response));
+        //         });
+        //     });
+
+        EXPECT_CALL(*stream, Cancel).Times(1);
+        EXPECT_CALL(*stream, Finish)
+            .WillOnce([&] { return sequencer.PushBack("Finish").then(
+              [](auto) { return Status{}; }
+            ); });
+
+        return std::unique_ptr<AsyncBidiWriteObjectStream>(std::move(stream));
+      });
+
+  auto mock_cq = std::make_shared<MockCompletionQueueImpl>();
+  //   // We will configure the connection to use disable timeouts, this is just used
+  // // for the retry loop backoff timers.
+  EXPECT_CALL(*mock_cq, MakeRelativeTimer).WillRepeatedly([&sequencer](auto d) {
+    auto deadline =
+        std::chrono::system_clock::now() +
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(d);
+    return sequencer.PushBack("MakeRelativeTimer").then([deadline](auto f) {
+      if (f.get()) return make_status_or(deadline);
+      return StatusOr<std::chrono::system_clock::time_point>(
+          Status(StatusCode::kCancelled, "cancelled"));
+    });
+  });
+
+  auto connection =
+      MakeTestConnection(CompletionQueue(mock_cq), mock, Options{}.set<storage::TransferStallTimeoutOption>(
+          std::chrono::seconds(0))); // Disable stall timeouts for simpler test
+
+  auto request = google::storage::v2::BidiWriteObjectRequest{};
+  EXPECT_TRUE(TextFormat::ParseFromString(kExpectedRequest, &request));
+  auto pending = connection->StartAppendableObjectUpload({std::move(request), connection->options()});
+
+  // The retry loop should start a backoff timer.
+  auto next = sequencer.PopFrontWithName();
+  EXPECT_EQ(next.second, "Start");
+  next.first.set_value(true);
+
+  next = sequencer.PopFrontWithName();
+  EXPECT_EQ(next.second, "Write[1]");
+  next.first.set_value(true);
+
+  next = sequencer.PopFrontWithName();
+  EXPECT_EQ(next.second, "Read[1]");
+  next.first.set_value(true);
+
+  auto r = pending.get();
+  ASSERT_STATUS_OK(r);
+  auto writer = *std::move(r);
+  EXPECT_EQ(absl::get<std::int64_t>(writer->PersistedState()), 0);
+
+  auto w1 = writer->Write({});
+  next = sequencer.PopFrontWithName();
+  EXPECT_EQ(next.second, "Write2");
+  next.first.set_value(true);
+  EXPECT_STATUS_OK(w1.get());
+
+  // auto w2 = writer->Finalize({});
+  // next = sequencer.PopFrontWithName();
+  // EXPECT_EQ(next.second, "Write");
+  // next.first.set_value(true);
+  // next = sequencer.PopFrontWithName();
+  // EXPECT_EQ(next.second, "Read");
+  // next.first.set_value(true);
+
+  // auto response = w2.get();
+  // ASSERT_STATUS_OK(response);
+  // EXPECT_EQ(response->bucket(), "projects/_/buckets/test-bucket");
+  // EXPECT_EQ(response->name(), "test-object");
+  // EXPECT_EQ(response->generation(), 123456);
+
+  // writer.reset();
+  // next = sequencer.PopFrontWithName();
+  // EXPECT_EQ(next.second, "Finish");
+  // next.first.set_value(true);
 }
 
 }  // namespace
