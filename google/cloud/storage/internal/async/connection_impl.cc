@@ -570,6 +570,24 @@ future<Status> AsyncConnectionImpl::DeleteObject(DeleteObjectParams p) {
       std::move(current), std::move(p.request), __func__);
 }
 
+future<StatusOr<google::storage::v2::Bucket>> AsyncConnectionImpl::GetBucket(
+    GetBucketParams p) {
+  auto current = internal::MakeImmutableOptions(std::move(p.options));
+  auto const idempotency = idempotency_policy(*current)->GetBucket(p.request);
+  auto retry = retry_policy(*current);
+  auto backoff = backoff_policy(*current);
+  return google::cloud::internal::AsyncRetryLoop(
+      std::move(retry), std::move(backoff), idempotency, cq_,
+      [stub = stub_](
+          CompletionQueue& cq, std::shared_ptr<grpc::ClientContext> context,
+          google::cloud::internal::ImmutableOptions options,
+          google::storage::v2::GetBucketRequest const& proto) {
+        return stub->AsyncGetBucket(cq, std::move(context), std::move(options),
+                                    proto);
+      },
+      std::move(current), std::move(p.request), __func__);
+}
+
 std::shared_ptr<storage::AsyncRewriterConnection>
 AsyncConnectionImpl::RewriteObject(RewriteObjectParams p) {
   auto current = internal::MakeImmutableOptions(std::move(p.options));

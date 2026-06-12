@@ -320,6 +320,20 @@ future<Status> AsyncClient::DeleteObject(
                                std::move(opts), connection_->options())});
 }
 
+future<StatusOr<google::storage::v2::Bucket>> AsyncClient::GetBucket(
+    BucketName const& bucket_name, Options opts) {
+  google::storage::v2::GetBucketRequest request;
+  request.set_name(bucket_name.FullName());
+  return GetBucket(std::move(request), std::move(opts));
+}
+
+future<StatusOr<google::storage::v2::Bucket>> AsyncClient::GetBucket(
+    google::storage::v2::GetBucketRequest request, Options opts) {
+  return connection_->GetBucket(
+      {std::move(request), google::cloud::internal::MergeOptions(
+                               std::move(opts), connection_->options())});
+}
+
 std::pair<AsyncRewriter, AsyncToken> AsyncClient::StartRewrite(
     BucketName const& source_bucket, std::string source_object_name,
     BucketName const& destination_bucket, std::string destination_object_name,

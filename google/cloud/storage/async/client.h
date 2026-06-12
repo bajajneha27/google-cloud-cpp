@@ -766,6 +766,24 @@ class AsyncClient {
   future<Status> DeleteObject(google::storage::v2::DeleteObjectRequest request,
                               Options opts = {});
 
+  /**
+   * @brief Get bucket metadata
+   *
+   * @param bucket_name the name of the bucket.
+   * @param opts options controlling the behavior of this RPC.
+   */
+  future<StatusOr<google::storage::v2::Bucket>> GetBucket(
+      BucketName const& bucket_name, Options opts = {});
+
+  /**
+   * @brief Get bucket metadata
+   *
+   * @param request the full request describing what bucket to get.
+   * @param opts options controlling the behavior of this RPC.
+   */
+  future<StatusOr<google::storage::v2::Bucket>> GetBucket(
+      google::storage::v2::GetBucketRequest request, Options opts = {});
+
   /*
   [start-rewrite-common]
   Applications use this function to reliably copy objects across [location

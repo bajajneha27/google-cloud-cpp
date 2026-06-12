@@ -477,6 +477,26 @@ TEST(ConnectionTracing, DeleteObject) {
                          SpanHasInstrumentationScope(), SpanKindIsClient())));
 }
 
+TEST(ConnectionTracing, GetBucket) {
+  auto span_catcher = InstallSpanCatcher();
+  PromiseWithOTelContext<StatusOr<google::storage::v2::Bucket>> p;
+
+  auto mock = std::make_unique<MockAsyncConnection>();
+  EXPECT_CALL(*mock, options).WillOnce(Return(TracingEnabled()));
+  EXPECT_CALL(*mock, GetBucket).WillOnce(expect_context(p));
+  auto actual = MakeTracingAsyncConnection(std::move(mock));
+  auto result = actual->GetBucket(AsyncConnection::GetBucketParams{})
+                    .then(expect_no_context);
+  p.set_value(google::storage::v2::Bucket{});
+  ASSERT_STATUS_OK(result.get().status());
+
+  auto spans = span_catcher->GetSpans();
+  EXPECT_THAT(spans, ElementsAre(AllOf(
+                         SpanNamed("storage::AsyncConnection::GetBucket"),
+                         SpanWithStatus(opentelemetry::trace::StatusCode::kOk),
+                         SpanHasInstrumentationScope(), SpanKindIsClient())));
+}
+
 using ::google::storage::v2::RewriteResponse;
 
 auto MakeRewriteResponse() {

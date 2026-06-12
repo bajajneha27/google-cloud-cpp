@@ -95,6 +95,9 @@ class AsyncConnectionImpl
   std::shared_ptr<storage::AsyncRewriterConnection> RewriteObject(
       RewriteObjectParams p) override;
 
+  future<StatusOr<google::storage::v2::Bucket>> GetBucket(
+      GetBucketParams p) override;
+
   // Expose this function for testing purposes. It creates a factory to create
   // new `AsyncReaderConnection` instances at different offsets.
   AsyncReaderConnectionFactory MakeReaderConnectionFactory(

@@ -203,6 +203,14 @@ class AsyncConnectionTracing : public storage::AsyncConnection {
                              impl_->DeleteObject(std::move(p)));
   }
 
+  future<StatusOr<google::storage::v2::Bucket>> GetBucket(
+      GetBucketParams p) override {
+    auto span = internal::MakeSpan("storage::AsyncConnection::GetBucket");
+    EnrichSpan(*span, p.options, p.request.name());
+    internal::OTelScope scope(span);
+    return internal::EndSpan(std::move(span), impl_->GetBucket(std::move(p)));
+  }
+
   std::shared_ptr<storage::AsyncRewriterConnection> RewriteObject(
       RewriteObjectParams p) override {
     auto const enabled = internal::TracingEnabled(p.options);

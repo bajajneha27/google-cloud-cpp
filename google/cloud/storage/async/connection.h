@@ -238,6 +238,24 @@ class AsyncConnection {
   /// Start an object rewrite.
   virtual std::shared_ptr<AsyncRewriterConnection> RewriteObject(
       RewriteObjectParams p) = 0;
+
+  /**
+   * A thin wrapper around the `GetBucket()` parameters.
+   *
+   * We use a single struct as the input parameter for this function to
+   * prevent breaking any mocks when additional parameters are needed.
+   */
+  struct GetBucketParams {
+    /// The bucket name and optional parameters, e.g. metageneration preconditions.
+    google::storage::v2::GetBucketRequest request;
+    /// Any options modifying the RPC behavior, including per-client and
+    /// per-connection options.
+    Options options;
+  };
+
+  /// Get bucket metadata.
+  virtual future<StatusOr<google::storage::v2::Bucket>> GetBucket(
+      GetBucketParams p) = 0;
 };
 
 GOOGLE_CLOUD_CPP_INLINE_NAMESPACE_END
